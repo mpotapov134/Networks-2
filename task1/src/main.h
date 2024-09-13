@@ -9,7 +9,7 @@
 #define CHECK_INTERVAL 1000
 #define OFFLINE_TIMEOUT 1000
 
-int create_socket_with_reusable_port();
+int create_socket_with_reusable_port(int protocol);
 int create_rcv_socket_ipv4(const in_addr *multicast_addr);
 int create_rcv_socket_ipv6(const in6_addr *multicast_addr);
 

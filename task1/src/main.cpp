@@ -85,8 +85,8 @@ int main(int argc, char **argv) {
 }
 
 
-int create_socket_with_reusable_port() {
-    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+int create_socket_with_reusable_port(int protocol) {
+    int socket_fd = socket(protocol, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
         handle_perror("socket");
     }
@@ -102,7 +102,7 @@ int create_socket_with_reusable_port() {
 
 
 int create_rcv_socket_ipv4(const in_addr *multicast_addr) {
-    int receiver_socket = create_socket_with_reusable_port();
+    int receiver_socket = create_socket_with_reusable_port(AF_INET);
 
     /* bind socket to multicast address */
     struct sockaddr_in receiver_addr;
@@ -130,7 +130,7 @@ int create_rcv_socket_ipv4(const in_addr *multicast_addr) {
 
 
 int create_rcv_socket_ipv6(const in6_addr *multicast_addr) {
-    int receiver_socket = create_socket_with_reusable_port();
+    int receiver_socket = create_socket_with_reusable_port(AF_INET6);
 
     /* bind to all interfaces; for some reason binding only to multicast addr does not work */
     struct sockaddr_in6 receiver_addr;
@@ -201,15 +201,18 @@ void receiver_function(int protocol, int receiver_socket) {
     sockaddr *src_sockaddr;
     socklen_t src_sockaddr_len;
     void *ip_address;
+    unsigned short *port;
 
     if (protocol == AF_INET) {
         src_sockaddr = (sockaddr *) &src_sockaddr_in;
         src_sockaddr_len = sizeof(src_sockaddr_in);
         ip_address = &src_sockaddr_in.sin_addr;
+        port = &src_sockaddr_in.sin_port;
     } else if (protocol == AF_INET6) {
         src_sockaddr = (sockaddr *) &src_sockaddr_in6;
         src_sockaddr_len = sizeof(src_sockaddr_in6);
         ip_address = &src_sockaddr_in6.sin6_addr;
+        port = &src_sockaddr_in6.sin6_port;
     }
 
     int64_t last_check_time = 0;
@@ -221,7 +224,7 @@ void receiver_function(int protocol, int receiver_socket) {
 
         char ip_str[INET6_ADDRSTRLEN];
         inet_ntop(protocol, ip_address, ip_str, sizeof(ip_str));
-        string socket_str = string(ip_str) + ':' + to_string(src_sockaddr_in.sin_port);
+        string socket_str = string(ip_str) + ':' + to_string(*port);
 
 
         if (copies.find(socket_str) == copies.end()) {
