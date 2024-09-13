@@ -5,12 +5,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <chrono>
+#include <iostream>
+#include <map>
+#include <string>
+
 #include "colors.h"
-
-#define RECV_PORT 12345
-
-void clonefinder(int protocol, const void *multicast_addr);
-void sender_function(int protocol, const void *multicast_addr, pid_t parent_pid);
+#include "main.h"
 
 
 void handle_error(const char *msg) {
@@ -117,23 +118,23 @@ void clonefinder(int protocol, const void *multicast_addr) {
     } else if (fork_pid == 0) {
         sender_function(protocol, multicast_addr, parent_pid);
     } else {
-        while (true);
+        receiver_function(protocol, receiver_socket);
     }
 }
 
 
 void sender_function(int protocol, const void *multicast_addr, pid_t parent_pid) {
-    printf("sender start\n");
     int sender_socket = socket(protocol, SOCK_DGRAM, 0);
     if (sender_socket == -1) {
         handle_perror("socket");
     }
 
     struct sockaddr *dst_sockaddr;
+    struct sockaddr_in dst_sockaddr_in;
+    struct sockaddr_in6 dst_sockaddr_in6;
     socklen_t dst_sockaddr_len;
 
     if (protocol == AF_INET) {
-        struct sockaddr_in dst_sockaddr_in;
         dst_sockaddr_in.sin_family = AF_INET;
         dst_sockaddr_in.sin_addr = *(in_addr *) multicast_addr;
         dst_sockaddr_in.sin_port = htons(RECV_PORT);
@@ -141,7 +142,6 @@ void sender_function(int protocol, const void *multicast_addr, pid_t parent_pid)
         dst_sockaddr = (sockaddr *) &dst_sockaddr_in;
         dst_sockaddr_len = sizeof(dst_sockaddr_in);
     } else if (protocol == AF_INET6) {
-        sockaddr_in6 dst_sockaddr_in6;
         dst_sockaddr_in6.sin6_family = AF_INET6;
         dst_sockaddr_in6.sin6_addr = *(in6_addr *) multicast_addr;
         dst_sockaddr_in6.sin6_port = htons(RECV_PORT);
@@ -150,7 +150,7 @@ void sender_function(int protocol, const void *multicast_addr, pid_t parent_pid)
         dst_sockaddr_len = sizeof(dst_sockaddr_in6);
     }
 
-    uint8_t buffer[] = {1};
+    uint8_t buffer[BUF_SIZE];
     while (true) {
         sendto(sender_socket, buffer, sizeof(buffer), 0, dst_sockaddr, dst_sockaddr_len);
         sleep(1);
@@ -158,6 +158,62 @@ void sender_function(int protocol, const void *multicast_addr, pid_t parent_pid)
         pid_t real_parent_pid = getppid();
         if (real_parent_pid != parent_pid) {
             exit(EXIT_SUCCESS);
+        }
+    }
+}
+
+
+void receiver_function(int protocol, int receiver_socket) {
+    std::chrono::high_resolution_clock clock;
+    auto start = clock.now();
+
+    std::map<std::string, int64_t> copies;
+
+    uint8_t buffer[BUF_SIZE];
+
+    struct sockaddr *src_sockaddr;
+    struct sockaddr_in src_sockaddr_in;
+    struct sockaddr_in6 src_sockaddr_in6;
+    socklen_t src_sockaddr_len;
+
+    if (protocol == AF_INET) {
+        src_sockaddr = (sockaddr *) &src_sockaddr_in;
+        src_sockaddr_len = sizeof(src_sockaddr_in);
+    } else if (protocol == AF_INET6) {
+        src_sockaddr = (sockaddr *) &src_sockaddr_in6;
+        src_sockaddr_len = sizeof(src_sockaddr_in6);
+    }
+
+    int64_t last_check_time = 0;
+
+    while (true) {
+        recvfrom(receiver_socket, buffer, BUF_SIZE, 0, src_sockaddr, &src_sockaddr_len);
+        auto cur_time = clock.now();
+        int64_t time_from_start = std::chrono::duration_cast<std::chrono::milliseconds> (cur_time - start).count();
+
+        char ip_str[INET6_ADDRSTRLEN];
+        inet_ntop(protocol, &src_sockaddr_in.sin_addr, ip_str, sizeof(ip_str));
+        std::string socket_str = std::string(ip_str) + ':' + std::to_string(src_sockaddr_in.sin_port);
+
+
+        if (copies.find(socket_str) == copies.end()) {
+            std::cout << "Обнаружена новая копия по адресу " << socket_str << "\n";
+        }
+        copies[socket_str] = time_from_start;
+
+
+        if (time_from_start - last_check_time >= CHECK_INTERVAL) {
+            /* check map */
+            for (auto iter = copies.begin(); iter != copies.end();) {
+                int64_t last_response_time = iter->second;
+                if (time_from_start - last_response_time >= OFFLINE_TIMEOUT) {
+                    std::cout << "Копия " << iter->first << " вышла из сети\n";
+                    iter = copies.erase(iter);
+                } else {
+                    iter++;
+                }
+            }
+            last_check_time = time_from_start;
         }
     }
 }
